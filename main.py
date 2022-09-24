@@ -1,37 +1,49 @@
-import numpy as np
-import pandas as pd
-import argparse 
-from sklearn.model_selection import train_test_split
-from sklearn.tree import DecisionTreeClassifier
+#import required libraries
+from azure.ai.ml import MLClient
+from azure.identity import DefaultAzureCredential
+from azure.ai.ml.entities import Environment, BuildContext
+from azure.ai.ml.entities import AmlCompute
+from azure.ai.ml import command, Input
 
-def crop_model(args):
+#Enter details of your AzureML workspace
+subscription_id = '7b7e94ec-f305-433f-829b-475500f5b6b3'
+resource_group = 'KS_hack_2022'
+workspace = 'KS_reactor_hack'
 
-    df=pd.read_csv(args.crop_csv)
-    c=df.label.astype('category')
-    targets = dict(enumerate(c.cat.categories))
-    df['target']=c.cat.codes
-    y=df.target
-    X=df[['N','P','K','temperature','humidity','ph','rainfall']]
-    X_train, X_test, y_train, y_test = train_test_split(X, y,random_state=1)
-    model = DecisionTreeClassifier(random_state=42).fit(X_train, y_train)
-    print(model.score(X_test,y_test))
+#connect to the workspace
+ml_client = MLClient(DefaultAzureCredential(), subscription_id, resource_group, workspace)
 
-    #result = model.predict([[78, 42, 42,20.130175, 81.604873, 7.628473, 262.717340]])
-    #print(targets[result[0]])
-    
-    return model
+# specify aml compute name.
+compute_instance = "rlsri23051"
 
-def parse_args():
-    parser = argparse.ArgumentParser()
+env_docker_conda = Environment(
+    image="mcr.microsoft.com/azureml/openmpi3.1.2-ubuntu18.04",
+    conda_file="environment.yml",
+    name="docker-image-plus-conda-example",
+    description="Environment created from a Docker image plus Conda environment.",
+)
+ml_client.environments.create_or_update(env_docker_conda)
 
-    parser.add_argument("--crop-csv", type=str)
-    parser.add_argument("--metric", type=str, default="accuracy")
-    parser.add_argument("--verbose", type=int, default=0)
+# define the command
+command_job = command(
+    code="./",
+    command="python crop_predict.py --crop-csv ${{inputs.crop_csv}}",
+    environment=env_docker_conda,
+    inputs={
+        "crop_csv": Input(
+            type="uri_file",
+            path="Crop_recommendation.csv",
+        )
+    },
+    compute= compute_instance,
+)
 
-    args = parser.parse_args()
 
-    return args
 
-if __name__ == "main":
-    args = parse_args()
-    crop_model(args)
+# submit the command
+returned_job = ml_client.jobs.create_or_update(command_job)
+
+print("success")
+
+# get a URL for the status of the job
+returned_job.services["Studio"].endpoint
